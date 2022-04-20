@@ -1,71 +1,110 @@
 #include <Arduino.h>
 
-// Funduino Joystick shield
-// www.fambach.net
-// GPL2
-// ******************************
+/**
+ * This is a simple example of using the Joystick rotary encoder. It assumes you have a potentiometer
+ * based analog joystick connected to an analog input port.
+ *
+ * Shows the value of a rotary encoder over the serial port. Wiring, wire the joystick as per instructions
+ * and take note of the analog input pin you've used.
+ */
 
-const byte button[] = {2, 3, 4, 5, 6, 7, 8};
-boolean pressed[] = {false, false, false, false, false, false, false};
-const int BUTTON_COUNT = 7;
-const byte PIN_ANALOG_X = 0;
-const byte PIN_ANALOG_Y = 1;
-int analog_x = 350;
-int analog_y = 350;
+#include <TaskManagerIO.h>
+#include <IoAbstraction.h>
+#include <JoystickSwitchInput.h>
 
-const int MIN_DELTA = 4;
-const String TELEGRAM = "[%s;%i;]";
+// JOYSTICK SHIELD V1.A
+// IMPORTANT:
+//      Voltage Switch must be set to 5V!
+// hardware pin numbers for the joystick shield V1.a
+const int a_button = 2;
+const int c_button = 4;
+const int d_button = 5;
+const int b_button = 3;
+const int e_button = 6;
+const int f_button = 7;
+const int j_button = 8;
+const int x_joystick = A0;
+const int y_joystick = A1;
 
-void sendTelegram(String name, int value)
+#define ANALOG_INPUT_PIN y_joystick
+#define ANALOG_LEFT_RIGHT_PIN x_joystick
+#define BUTTON_PIN j_button
+#define MULTI_IO_ARDUINO_PIN_MAX 100
+// we need to create an analog device that the joystick encoder will use to get readings.
+// In this case on arduino analog pins.
+AnalogDevice *analogDevice;
+
+// We now want to receive button input from both Arduino pins, and two extra simulated button pins that
+// are acutally when the joystick moves left and right. So we need a multiIoAbstraction.
+MultiIoAbstractionRef multiIo = multiIoExpander(MULTI_IO_ARDUINO_PIN_MAX);
+
+void onEncoderChange(int newValue)
 {
-
-  String telegram;
-  telegram.reserve(20);
-  telegram.concat("#");
-  telegram.concat(name);
-  telegram.concat(";");
-  telegram.concat(value);
-  Serial.println(telegram);
+    Serial.print("New joystick value: ");
+    Serial.print(newValue);
+    Serial.print(", analog in ");
+    Serial.print(analogDevice->getCurrentValue(ANALOG_INPUT_PIN));
+    Serial.print(", switch ");
+    Serial.println(analogDevice->getCurrentValue(ANALOG_LEFT_RIGHT_PIN));
 }
 
 void setup()
 {
-  Serial.begin(115200);
-  for (int i = 0; i < BUTTON_COUNT; i++)
-  {
-    pinMode(button[i], INPUT);
-  }
+    Serial.begin(115200);
+
+    analogDevice = internalAnalogIo();
+
+    // MKR boards require the line below to wait for the serial port, uncomment if needed
+    // However, it doesn't work on some other boards and locks them up.
+    // while(!Serial);
+
+    Serial.println("Starting joystick rotary encoder example");
+
+    // now we add an expander that handles the left and right function of the joystick as two buttons, these could
+    // be useful for next and back functions for example. The mid point for calibration will be half max value in
+    // our case, if your potentiometer differs, set the calibration accordingly. Joystick pins will start at 100.
+    multiIoAddExpander(multiIo, joystickTwoButtonExpander(analogDevice, ANALOG_LEFT_RIGHT_PIN, .5F), 10);
+
+    // first initialise switches using the multi io expander and pull up switch logic.
+    switches.initialise(multiIo, true);
+
+    // now register the joystick
+    setupAnalogJoystickEncoder(analogDevice, ANALOG_INPUT_PIN, onEncoderChange);
+
+    // once you've registed the joystick above with switches, you can then alter the mid point and tolerance if needed
+    // here we set the midpoint to 65% and the tolerance (or point at which we start reading) at +-5%.
+    reinterpret_cast<JoystickSwitchInput *>(switches.getEncoder())->setTolerance(.5F, 0.05F);
+
+    // now set the range to 500 and current value to 250
+    switches.changeEncoderPrecision(500, 250);
+
+    // now we set up the left function to operate like a switch, it's on the joystick expander on the multi io
+    // so it's addressed with the offset we provided earlier
+    switches.addSwitch(
+        MULTI_IO_ARDUINO_PIN_MAX + ANALOG_JOYSTICK_LOWER_PIN, [](pinid_t pin, bool held)
+        {
+        Serial.print("Left direction, held="); Serial.println(held); },
+        20);
+
+    // now we set up the right function to operate like a switch, it's on the joystick expander on the multi io
+    // so it's addressed with the offset we provided earlier
+    switches.addSwitch(
+        MULTI_IO_ARDUINO_PIN_MAX + ANALOG_JOYSTICK_HIGHER_PIN, [](pinid_t pin, bool held)
+        {
+        Serial.print("Right direction, held="); Serial.println(held); },
+        20);
+
+    // now we set up the joystick click switch, it's on a regular device pin, so it's pin is addressed as usual.
+    switches.addSwitch(BUTTON_PIN, [](pinid_t pin, bool held)
+                       {
+        Serial.print("Joystick Clicked, held="); Serial.println(held); });
+
+    // and that's it, task manager and switches does the register
+    Serial.println("Started joystick example");
 }
 
 void loop()
 {
-
-  for (int i = 0; i < BUTTON_COUNT; i++)
-  {
-    boolean b = digitalRead(button[i]);
-    if (b != pressed[i])
-    {
-      pressed[i] = b;
-      sendTelegram("b" + String(i), (b ? 1 : 0));
-    }
-  }
-
-  int cur = analogRead(PIN_ANALOG_X);
-  int delta = analog_x - cur;
-
-  if (delta > MIN_DELTA || delta < -MIN_DELTA)
-  {
-    analog_x = cur;
-    sendTelegram("ax", cur);
-  }
-
-  cur = analogRead(PIN_ANALOG_Y);
-  delta = analog_y - cur;
-
-  if (delta > MIN_DELTA || delta < -MIN_DELTA)
-  {
-    analog_y = cur;
-    sendTelegram("ay", cur);
-  }
-  // delay(100);
+    // we must always call this every loop cycle and as frequently as possible
+    taskManager.runLoop();
 }
