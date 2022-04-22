@@ -15,6 +15,8 @@
 // JOYSTICK SHIELD V1.A
 // IMPORTANT:
 //      Voltage Switch must be set to 5V!
+// Helpfull Code: https://gist.github.com/tobiashochguertel/bf9c2fa2a830adc6e98ff25df5d29ec4
+//
 // hardware pin numbers for the joystick shield V1.a
 const int a_button = 2;
 const int c_button = 4;
